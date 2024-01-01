@@ -200,6 +200,17 @@ export const ListingTable = ({
         const rowPair = (
             <React.Fragment key={rowKey + "-inner-row"}>
                 <Tr {...rowProps}>
+                    {onSelect &&
+                        <Td select={{
+                            rowIndex,
+                            onSelect,
+                            isSelected: !!row.selected,
+                            rowKey,
+                            props: {
+                                id: rowKey,
+                            },
+                        }} />
+                    }
                     {isExpandable
                         ? (row.expandedContent
                             ? <Td expand={{
@@ -213,16 +224,6 @@ export const ListingTable = ({
                             }} />
                             : <Td className="pf-v5-c-table__toggle" />)
                         : null
-                    }
-                    {onSelect &&
-                        <Td select={{
-                            rowIndex,
-                            onSelect,
-                            isSelected: !!row.selected,
-                            props: {
-                                id: rowKey
-                            }
-                        }} />
                     }
                     {row.columns.map((cell, cellIndex) => {
                         const { key, ...cellProps } = cell.props || {};

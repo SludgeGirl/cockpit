@@ -34,7 +34,7 @@ import { useInit } from "hooks";
 
 const _ = cockpit.gettext;
 
-function debug() {
+export function debug() {
     if (window.debugging == "all" || window.debugging?.includes("packagekit"))
         console.debug.apply(console, arguments);
 }

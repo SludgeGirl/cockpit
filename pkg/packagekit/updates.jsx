@@ -21,9 +21,12 @@ import 'polyfills'; // once per application
 import 'cockpit-dark-theme'; // once per page
 
 import cockpit from "cockpit";
-import React from "react";
+import React, { useState } from "react";
 import { createRoot } from 'react-dom/client';
 
+import { Form, FormGroup } from "@patternfly/react-core/dist/esm/components/Form/index.js";
+import { Radio } from "@patternfly/react-core/dist/esm/components/Radio/index.js";
+import { TimePicker } from "@patternfly/react-core/dist/esm/components/TimePicker/index.js";
 import { Alert } from "@patternfly/react-core/dist/esm/components/Alert/index.js";
 import { Badge } from "@patternfly/react-core/dist/esm/components/Badge/index.js";
 import { Button } from "@patternfly/react-core/dist/esm/components/Button/index.js";
@@ -59,7 +62,7 @@ import {
 import { cellWidth, TableText } from "@patternfly/react-table";
 import { Remarkable } from "remarkable";
 
-import { AutoUpdates, getBackend } from "./autoupdates.jsx";
+import { AutoUpdates, getBackend, debug } from "./autoupdates.jsx";
 import { KpatchSettings, KpatchStatus } from "./kpatch.jsx";
 import { History, PackageList } from "./history.jsx";
 import { page_status } from "notifications";
@@ -77,6 +80,7 @@ import * as python from "python.js";
 import callTracerScript from './callTracer.py';
 
 import "./updates.scss";
+import { DatePicker } from '@patternfly/react-core';
 
 const _ = cockpit.gettext;
 
@@ -268,7 +272,8 @@ function customRemarkable() {
     return remarkable;
 }
 
-function updateItem(remarkable, info, pkgNames, key) {
+function updateItem(remarkable, info, pkgNames, key, selected) {
+    selected = selected || false;
     let bugs = null;
     if (info.bug_urls && info.bug_urls.length) {
         // we assume a bug URL ends with a number; if not, show the complete URL
@@ -404,12 +409,13 @@ function updateItem(remarkable, info, pkgNames, key) {
             key,
             className: info.severity === PK.Enum.INFO_SECURITY ? ["error"] : [],
         },
+        selected,
         hasPadding: true,
         expandedContent,
     };
 }
 
-const UpdatesList = ({ updates }) => {
+const UpdatesList = ({ updates, packagesSelected, setPackagesSelected }) => {
     const remarkable = customRemarkable();
     const update_ids = [];
 
@@ -441,6 +447,8 @@ const UpdatesList = ({ updates }) => {
         return a.localeCompare(b);
     });
 
+    const [packages, setPackages] = useState([]);
+
     return (
         <ListingTable aria-label={_("Available updates")}
                 gridBreakPoint='grid-lg'
@@ -450,7 +458,24 @@ const UpdatesList = ({ updates }) => {
                     { title: _("Severity"), transforms: [cellWidth(15)] },
                     { title: _("Details"), transforms: [cellWidth(30)] },
                 ]}
-                rows={update_ids.map(id => updateItem(remarkable, updates[id], packageNames[id].sort((a, b) => a.name > b.name), id))} />
+                onSelect={(_event, isSelected, _rowId, rowData) => {
+                    let newSelected = [...packages];
+                    let newPackagesSelected = [...packagesSelected];
+                    if (isSelected) {
+                        newSelected.push(rowData.props.id);
+                        packageNames[rowData.props.id].forEach((item) => {
+                            newPackagesSelected.push(item.name + '.' + item.arch);
+                        });
+                    } else {
+                        newSelected = newSelected.filter((entry) => entry !== rowData.props.id);
+                        packageNames[rowData.props.id].forEach((item) => {
+                            newPackagesSelected = newPackagesSelected.filter((entry) => entry !== item.name + '.' + item.arch);
+                        });
+                    }
+                    setPackages(newSelected);
+                    setPackagesSelected(newPackagesSelected);
+                }}
+                rows={update_ids.map(id => updateItem(remarkable, updates[id], packageNames[id].sort((a, b) => a.name > b.name), id, packages.includes(id)))} />
     );
 };
 
@@ -870,6 +895,98 @@ const UpdatesStatus = ({ updates, highestSeverity, timeSinceRefresh, tracerPacka
     </Stack>);
 };
 
+const UpdateSchedulerDialog = ({ updates, defaultAction, defaultActionArgs, close, packages }) => {
+    const [immediate, setImmediate] = useState(true);
+    const [date, setDate] = useState(null);
+    const [time, setTime] = useState("0:00");
+
+    const hasRequiredDnfVersion = function() {
+        return false;
+    };
+
+    const save = function() {
+        const datetime = date + " " + time;
+        const serviceName = "cockpit-packagekit-" + datetime.replace(' ', '-');
+
+        // first lets write our timer!
+        const timer = "printf '[Unit]\\nDescription=Update " + packages.join(', ') + "\\n\\n[Timer]\\nOnCalendar=" + datetime + "\\n\\n[Install]\\nWantedBy=timers.target\\n' > /etc/systemd/system/" + serviceName + ".timer; "; // Todo double check systemd path
+
+        // now lets write the service file!
+        let packagesInclude = '';
+        packages.forEach((pkg) => { packagesInclude += '--includepkgs ' + pkg + ' ' });
+        const service = "printf '# packages: " + packages.join(', ') + "\\n[Unit]\\nDescription=Update " + packages.join(', ') + "\\n\\n[Service]\\nType=oneshot\\nExecStart=dnf-automatic --installupdates " + packagesInclude + " && rm /etc/systemd/system/" + serviceName + ".service && rm /etc/systemd/system/" + serviceName + ".timer\\n' > /etc/systemd/system/" + serviceName + ".service; ";
+        const script = timer + service + "systemctl daemon-reload; ";
+
+        return cockpit.script(script, [], { superuser: "require" })
+                .then(() => {
+                    debug("Updates for " + packages.join(', ') + " scheduled successfully");
+                    close();
+                })
+                .catch(error => console.error("Scheduling package updates failed:", error.toString()));
+    };
+
+    if (hasRequiredDnfVersion()) {
+        defaultAction(...defaultActionArgs);
+        return <></>;
+    }
+
+    return (
+        <Modal position="top" variant="small" id="updates-scheduler-dialog" isOpen
+               title={_("Update Scheduler")}
+               onClose={close}
+               footer={
+                   <>
+                       <Button variant="primary"
+                               onClick={save}>
+                           {_("Run Updates")}
+                       </Button>
+                       <Button variant="link"
+                               onClick={close}>
+                           {_("Cancel")}
+                       </Button>
+                   </>
+               }>
+            <Form isHorizontal onSubmit={save}>
+                <FormGroup fieldId="type" label={_("Type")} hasNoPaddingTop>
+                    <Radio isChecked={immediate}
+                           onChange={() => { setImmediate(true) }}
+                           label={_("Apply immediately")}
+                           id="apply-immediately"
+                           name="type" />
+                    <Radio isChecked={!immediate}
+                           onChange={() => { setImmediate(false) }}
+                           label={_("Schedule updates")}
+                           id="schedule-updates"
+                           name="type" />
+                </FormGroup>
+
+                {!immediate &&
+                <>
+                    <FormGroup fieldId="when" label={_("When")}>
+                        <DatePicker aria-label={_("Pick date")}
+                            buttonarialabel={_("toggle date picker")}
+                            locale={timeformat.dateFormatLang()}
+                            weekStart={timeformat.firstDayOfWeek()}
+                            onChange={(_, str, data) => {
+                                setDate(str);
+                            }}
+                            appendTo={() => document.body} />
+                    </FormGroup>
+
+                    <FormGroup fieldId="at" label={_("At")}>
+                        <TimePicker time={time} is24Hour
+                                        menuAppendTo={() => document.body}
+                                        id="update-scheduler-time"
+                                        invalidFormatErrorMessage={_("Invalid time format")}
+                                        onChange={(_, time) => setTime(time)} />
+                    </FormGroup>
+
+                    <Alert variant="info" title={_("This host will reboot after updates are installed.")} isInline />
+                </>}
+            </Form>
+        </Modal>);
+};
+
 class CardsPage extends React.Component {
     constructor() {
         super();
@@ -944,10 +1061,14 @@ class CardsPage extends React.Component {
                         </Flex>}
                     {this.props.applyKpatches}
                     {this.props.applySecurity}
+                    {this.props.applySome}
                     {this.props.applyAll}
                 </div>),
                 containsList: true,
-                body: <UpdatesList updates={this.props.updates} />
+                body: <UpdatesList updates={this.props.updates}
+                    packagesSelected={this.props.packagesSelected}
+                    setPackagesSelected={this.props.setPackagesSelected}
+                />
             });
         }
 
@@ -996,6 +1117,8 @@ class OsUpdates extends React.Component {
             tracerPackages: { daemons: [], manual: [], reboot: [] },
             tracerAvailable: false,
             tracerRunning: false,
+            packagesSelected: [],
+            showUpdateSchedulerDialog: false,
             showRestartServicesDialog: false,
             showRebootSystemDialog: false,
             backend: "",
@@ -1354,7 +1477,7 @@ class OsUpdates extends React.Component {
     }
 
     renderContent() {
-        let applySecurity, applyKpatches, applyAll;
+        let applySecurity, applyKpatches, applyAll, applySome;
 
         /* On unregistered RHEL systems we need some heuristics: If the "main" OS repos (which provide coreutils) require
          * a subscription, then point this out and don't show available updates, even if there are some auxiliary
@@ -1416,6 +1539,11 @@ class OsUpdates extends React.Component {
                         : _("Install all updates") }
                 </Button>);
 
+            applySome = (
+                <Button id="selected-update" variant="primary" onClick={ () => this.setState({ showUpdateSchedulerDialog: true }) }>
+                    {_("Install selected updates")}
+                </Button>);
+
             if (num_security_updates > 0 && num_updates > num_security_updates) {
                 applySecurity = (
                     <Button id="install-security" variant="secondary" onClick={ () => this.applyUpdates(UPDATES.SECURITY) }>
@@ -1455,9 +1583,12 @@ class OsUpdates extends React.Component {
                             <CardsPage handleRefresh={this.handleRefresh}
                                        applySecurity={applySecurity}
                                        applyAll={applyAll}
+                                       applySome={applySome}
                                        applyKpatches={applyKpatches}
                                        highestSeverity={highest_severity}
                                        onValueChanged={this.onValueChanged}
+                                       packagesSelected={this.state.packagesSelected}
+                                       setPackagesSelected={(packages) => this.setState({ packagesSelected: packages }) }
                                        {...this.state} />
                         </Gallery>
                     </PageSection>
@@ -1468,6 +1599,12 @@ class OsUpdates extends React.Component {
                             callTracer={(state) => this.callTracer(state)}
                             onValueChanged={delta => this.setState(delta)}
                             loadUpdates={this.loadUpdates} />
+                    }
+                    { this.state.showUpdateSchedulerDialog &&
+                        <UpdateSchedulerDialog
+                            close={() => this.setState({ showUpdateSchedulerDialog: false })}
+                            packages={this.state.packagesSelected}
+                        />
                     }
                     { this.state.showRebootSystemDialog &&
                         <ShutdownModal onClose={() => this.setState({ showRebootSystemDialog: false })} />
