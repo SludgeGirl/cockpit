@@ -651,12 +651,6 @@ authentication via sssd/FreeIPA.
 %endif
 %{?suse_version:%verify(not mode) }%attr(4750, root, cockpit-wsinstance-socket) %{_libexecdir}/cockpit-session
 %{_datadir}/cockpit/branding
-%if 0%{?with_selinux}
-%{_datadir}/selinux/packages/%{selinuxtype}/%{name}.pp.bz2
-%{_mandir}/man8/%{name}_session_selinux.8cockpit.*
-%{_mandir}/man8/%{name}_ws_selinux.8cockpit.*
-%ghost %{_sharedstatedir}/selinux/%{selinuxtype}/active/modules/200/%{name}
-%endif
 
 %pre ws
 %if 0%{?suse_version} == 1500
