@@ -737,6 +737,7 @@ fi
 %verify_permissions -e %{_libexecdir}/cockpit-session
 %endif
 
+%if 0%{?with_selinux}
 %package ws-selinux
 Summary: SELinux security policy for cockpit-ws
 # older -ws contained the SELinux policy, now split out
@@ -765,6 +766,7 @@ SELinux policy module for the cockpit-ws package.
 %postun ws-selinux
 %selinux_modules_uninstall -s %{selinuxtype} %{name}
 %selinux_relabel_post -s %{selinuxtype}
+%endif
 
 # -------------------------------------------------------------------------------
 # Sub-packages that are part of cockpit-system in RHEL/CentOS, but separate in Fedora
