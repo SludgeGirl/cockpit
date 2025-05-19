@@ -663,9 +663,6 @@ getent passwd cockpit-session-socket >/dev/null || useradd -r -g cockpit-session
 getent passwd cockpit-systemd-service >/dev/null || useradd -r -g cockpit-wsinstance-socket -d /nonexisting -s /sbin/nologin -c "User for cockpit.service" cockpit-systemd-service
 %endif
 
-if %{_sbindir}/selinuxenabled 2>/dev/null; then
-    %selinux_relabel_pre -s %{selinuxtype}
-fi
 %if 0%{?suse_version} > 1500
 # Prepare for migration to /usr/lib; save any old .rpmsave
 for i in pam.d/cockpit ; do
